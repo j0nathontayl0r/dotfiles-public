@@ -1,0 +1,17 @@
+# Portable git config (macOS + Linux) — managed via dotfiles / GNU Stow.
+# Machine-specific bits (the 1Password op-ssh-sign path, which differs per OS)
+# live in ~/.gitconfig.local, pulled in by the [include] at the bottom.
+[user]
+	name = Jonathon Taylor
+	email = jonathon@jdtay.com
+	signingkey = key::ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAVWky1bLvGDQTajJAPLC1YAqqekQWqIUjwyV2qaE5nm
+[gpg]
+	format = ssh
+[gpg "ssh"]
+	allowedSignersFile = ~/.config/git/allowed_signers
+[commit]
+	gpgsign = true
+[tag]
+	gpgsign = true
+[include]
+	path = ~/.gitconfig.local

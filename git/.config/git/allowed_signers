@@ -1,0 +1,6 @@
+jonathon@jdtay.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAVWky1bLvGDQTajJAPLC1YAqqekQWqIUjwyV2qaE5nm 1Password "SSH Key - GitHub" (portable default)
+jonathon@jdtay.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIF4oAYP6i7oC59RpJbmNVvlvfa5oIzOYXCvlSuRNUIyc 1Password "Homelab - SSH Key" (Jonathons-MacBook-Pro)
+jonathon@jdtay.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMmukqrRxNdjvNcTSLMZx2zOxVUudhcNJmwdmQoTcWU+ dev (host-local key, no agent needed)
+jonathon@jdtay.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICuEPqUz0J+nyVHL0eJFFpKm9fTIX4YhmgJ1HpteNb7m backup (host-local key, no agent needed)
+jonathon@jdtay.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIF6YI0xoO9IG/pQ9JyFa1z0Mu+yYY4+1OIYKXPPt1h/W pihole (host-local key, no agent needed)
+jonathon@jdtay.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJxqlTYMQMKxdi/MhtunlJDProSBSHh/bL/I7eTVpQGE balder (host-local key; 1Password agent can't sign headlessly)

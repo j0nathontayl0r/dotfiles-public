@@ -1,0 +1,61 @@
+gitkraken/.gitkraken/logs/*
+gitkraken/.gitkraken/profiles/*
+vscode/.vscode/extensions/
+vscode/.vscode/cli/
+ssh/.ssh/known_hosts
+ssh/.ssh/known_hosts.old
+ssh/.ssh/config
+zsh/.oh-my-zsh/
+
+# gcloud CLI state: OAuth/access-token DBs, legacy credential files, and
+# per-run logs — all machine-local secrets/runtime state, never dotfiles.
+config/.config/gcloud/
+
+# tfenv: keep the small `version` pin, never the downloaded toolchains —
+# each terraform/tofu binary is ~100 MB and is re-fetched by `tfenv install`.
+config/.config/tfenv/versions/
+
+# Claude Code — track config only (CLAUDE.md, agents/, commands/). settings.json is
+# host-local now (the TUI rewrites it and hook paths are per-host — see below).
+# Everything below is runtime state, secrets, or machine-local and must NOT sync,
+# even in a private repo.
+claude/.claude/.credentials.json
+claude/.claude/history.jsonl
+claude/.claude/*.log
+claude/.claude/*auth*.json
+claude/.claude/.last-*
+claude/.claude/daemon.lock
+claude/.claude/backups/
+claude/.claude/cache/
+claude/.claude/daemon/
+claude/.claude/downloads/
+claude/.claude/file-history/
+claude/.claude/jobs/
+claude/.claude/plugins/
+claude/.claude/session-env/
+claude/.claude/sessions/
+claude/.claude/shell-snapshots/
+# ~/.claude.json is never stowed — it is machine-local and holds session state.
+
+# memory/ and projects/ are host-local, never tracked: transcripts capture
+# arbitrary pasted text and can't safely be secret-scanned, so shipping them
+# through git would mean a pasted credential lands in shared history with
+# zero scanning and no clean way to purge it.
+claude/.claude/memory/
+claude/.claude/projects/
+
+# healthchecks.io ping URL + any auto-sync secrets (machine-local; also lives
+# outside the repo at ~/.config/dotfiles-sync.env, this is belt-and-braces)
+dotfiles-sync.env
+sync/*.env
+
+# per-machine shell overrides (not tracked)
+.zshrc.local
+alacritty/.config/alacritty/*.bak
+.gitconfig.local
+claude/.claude/settings.json
+
+# 1Password CLI: per-DEVICE state (device id, signin cache). op refuses to read
+# it through a symlink, and the device id must differ per machine, so it can
+# never be a stow-managed dotfile. op recreates it as needed.
+config/.config/op/
