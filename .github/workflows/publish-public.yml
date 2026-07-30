@@ -1,0 +1,50 @@
+# Gate-and-publish: every push to the `public` branch of the PRIVATE repo is
+# secret-scanned (gitleaks, full branch history) and checked against a private
+# denylist of infra strings (hostnames/IPs scrubbed from the public tree —
+# stored as the PUBLIC_DENYLIST secret precisely so they never appear here).
+# Only if both pass is the branch pushed to the public mirror.
+#
+# Lives only on the `public` branch: push-triggered workflows run from the
+# pushed branch's copy. The public mirror has no `public` branch, so the
+# published copy of this file never triggers there.
+name: Publish to dotfiles-public
+
+on:
+  push:
+    branches: [public]
+
+jobs:
+  scan-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # gitleaks + denylist scan the whole branch history
+
+      - name: Secret scan (gitleaks, full history)
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz | tar -xz gitleaks
+          ./gitleaks git --no-banner --redact .
+
+      - name: Infra denylist (strings gitleaks won't catch)
+        env:
+          DENYLIST: ${{ secrets.PUBLIC_DENYLIST }}
+        run: |
+          # ':!.github' keeps this workflow's own diffs out of the scan.
+          if git log -p -- . ':!.github' | grep -Eq "$DENYLIST"; then
+            echo '::error::Denylist match in branch history. Locally: git log -p public | grep -E "<PUBLIC_DENYLIST>"'
+            exit 1
+          fi
+
+      - name: Push to public mirror
+        env:
+          DEPLOY_KEY: ${{ secrets.PUBLIC_REPO_DEPLOY_KEY }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          # Fast-forward only: if `public` was rebased, this fails rather than
+          # silently rewriting the mirror — force-push by hand if intended.
+          GIT_SSH_COMMAND='ssh -i ~/.ssh/deploy_key -o UserKnownHostsFile=~/.ssh/known_hosts' \
+            git push git@github.com:j0nathontayl0r/dotfiles-public.git HEAD:main
