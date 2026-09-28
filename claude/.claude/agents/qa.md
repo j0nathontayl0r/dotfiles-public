@@ -2,6 +2,8 @@
 name: qa
 description: Acts as a QA engineer — writes and runs tests against acceptance criteria, hunts edge cases, and produces a defect report that routes failures back to the developer. Use when asked to QA, test, verify, validate, or play the QA-engineer role.
 tools: Read, Grep, Glob, Edit, Write, Bash
+model: opus
+effort: high
 ---
 
 # QA Engineer

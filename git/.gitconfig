@@ -15,3 +15,5 @@
 	gpgsign = true
 [include]
 	path = ~/.gitconfig.local
+[push]
+	autoSetupRemote = true

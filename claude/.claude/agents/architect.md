@@ -2,6 +2,7 @@
 name: architect
 description: Acts as a tech lead / architect — turns a product spec into a concrete implementation plan with file layout, interfaces, trade-offs, and a task breakdown. Use when asked to plan, design, or architect an implementation, or to play the architect/tech-lead role.
 tools: Read, Grep, Glob, Write
+model: fable
 ---
 
 # Architect / Tech Lead

@@ -119,8 +119,14 @@ git_prune_all() {
   echo "✂️  Pruning origin's deleted remote-tracking branches..."
   git remote prune origin
   echo "🧹 Cleaning up local branches merged to master/main..."
-  git branch --merged master 2>/dev/null | grep -v '^\* master' | xargs -n 1 git branch -d 2>/dev/null || echo "No master-merged branches to delete"
-  git branch --merged main   2>/dev/null | grep -v '^\* main'   | xargs -n 1 git branch -d 2>/dev/null || echo "No main-merged branches to delete"
+  local base
+  for base in master main; do
+    git rev-parse -q --verify "refs/heads/$base" >/dev/null || continue
+    # A base is always "merged" into itself; skip long-lived branches whatever is checked out.
+    git for-each-ref --merged "$base" --format='%(refname:short)' refs/heads/ \
+      | grep -vxE 'main|master|develop' \
+      | xargs -n 1 git branch -d 2>/dev/null
+  done
   echo "✅ Git pruning completed!"
 }
 alias gprune='git_prune_all'
@@ -146,6 +152,28 @@ if [[ -S ~/.1password/agent.sock ]]; then
   export SSH_AUTH_SOCK=~/.1password/agent.sock
 elif [[ "$OSTYPE" != darwin* ]]; then
   export SSH_AUTH_SOCK="$HOME/.ssh/agent.sock"
+fi
+
+# --- Claude Code: default model for unpinned subagents ----------------------
+# Roles with a `model:` in ~/.claude/agents/*.md (architect + reviewer on Fable,
+# the other four on Opus) override this; it only catches the rest —
+# general-purpose, plugin agents, skill sub-agents (Explore and fork inherit the
+# session model unless CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1). Lives here, not in
+# settings.json: that file is host-local and untracked, so this is the only way
+# the default reaches every machine.
+export CLAUDE_CODE_SUBAGENT_MODEL="opus[1m]"
+
+# --- Claude Code: 1Password service account (macOS only) ---------------------
+# op's Touch ID app integration re-prompts once per Claude session. A service
+# account token (login keychain item "1PasswordServiceToken", scoped read-only
+# to the vaults Claude needs) removes the prompt. Scoped to the claude process
+# only, so interactive `op` keeps using the full app integration.
+if [[ "$OSTYPE" == darwin* ]] && command -v op >/dev/null; then
+  claude() {
+    local t; t=$(security find-generic-password -s 1PasswordServiceToken -w 2>/dev/null)
+    if [[ -n $t ]]; then OP_SERVICE_ACCOUNT_TOKEN=$t command claude "$@"
+    else command claude "$@"; fi
+  }
 fi
 
 # --- PATH additions (added only if the target actually exists) --------------

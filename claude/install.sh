@@ -6,7 +6,8 @@
 #      symlinks are created and Claude's runtime state (sessions, history,
 #      credentials) is left untouched. This covers config only — settings.json,
 #      CLAUDE.md, agents/, commands/.
-#   2. Points ~/.claude/memory/host.md at this host's notes file.
+#   2. Points ~/.claude/memory/host.md at this host's notes file, and merges
+#      claude/settings.shared.json into the host-local ~/.claude/settings.json.
 #   3. Enables the repo's pre-commit secret-scan hook (core.hooksPath lives in
 #      .git/config, which is NOT carried by a clone, so it must be set locally).
 #
@@ -78,6 +79,21 @@ if [ -f "$HOME/.claude/memory/$host_mem" ]; then
 else
   : > "$HOME/.claude/memory/host.md"   # no host notes yet for this machine: empty (import is a no-op)
   echo "No memory/$host_mem for this machine yet; created empty ~/.claude/memory/host.md"
+fi
+
+# 2c. Shared settings: settings.json is host-local and untracked (it holds
+#     host paths, hooks and auto-mode notes), so the few keys every host should
+#     share live in claude/settings.shared.json and are merged in here. Shared
+#     keys win; everything else in the host file is kept. Written with `cat >`
+#     so a stow symlink at ~/.claude/settings.json stays a symlink.
+settings="$HOME/.claude/settings.json"
+if command -v jq >/dev/null; then
+  [ -s "$settings" ] || echo '{}' > "$settings"
+  merged="$(jq -s '.[0] * .[1]' "$settings" "$repo_root/claude/settings.shared.json")"
+  printf '%s\n' "$merged" > "$settings"
+  echo "Merged claude/settings.shared.json -> ~/.claude/settings.json"
+else
+  echo "warning: jq not installed; skipped merging claude/settings.shared.json" >&2
 fi
 
 # 3. Enable the secret-scan pre-commit hook for this clone.

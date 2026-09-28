@@ -48,13 +48,36 @@ Gotchas:
 - The package set differs per host (headless boxes skip `wezterm`/`alacritty`).
 - Verify: `find ~ -maxdepth 4 -xtype l -lname '*dotfiles*'` prints nothing. A
   genuinely *broken* link is `find ~ -xtype l`; a normal (coloured) symlink is
-  not broken.
+  not broken. Or just run `./stow-check` (see "Checking stow health" below).
+
+## Checking stow health
+
+`./stow-check` is a read-only audit of every stow package. It classifies each
+target the package provides (linked, dangling, conflict, absolute-symlink,
+missing — a package with *no* targets present is reported once as "never
+stowed", which is informational, since some packages are intentionally skipped
+per host), diffs conflicting real files against the repo copy so you can see
+whether deleting the local file is safe, and prints the exact copy-paste
+command to fix each problem. It executes nothing itself — every stow call it
+makes is a dry run (`-n`).
+
+```sh
+./stow-check              # audit every package
+./stow-check git ssh      # audit only the named packages
+```
+
+Exit codes: `0` — every package fully linked or never stowed (warnings such as
+hand-made absolute symlinks are allowed); `1` — at least one real problem
+(conflict, dangling or missing target); `2` — usage error (unknown package
+name, or stow not installed).
 
 ## AI "team" workflow
 
 A "team of AI" workflow — Product Owner, Architect, Developer, QA Engineer,
-Tech Writer — where each role has a single responsibility and hands off to the
-next through files (`specs/` → `plans/` → implementation → `qa/` → docs).
+Code Reviewer, Tech Writer — where each role has a single responsibility and
+hands off to the next through files (`specs/` → `plans/` → implementation →
+`qa/` → `review/` → docs). The Code Reviewer exists only in the Claude Code
+form.
 
 It ships in two forms:
 
@@ -62,8 +85,8 @@ It ships in two forms:
   from `config/.config/agents/skills/`.
 - **Claude Code** — the same roles ported to subagents and slash commands under
   [`claude/.claude/`](./claude/.claude/), stowed to `~/.claude/`. Provides the
-  agents `product-owner`, `architect`, `developer`, `qa`, `tech-writer` and the
-  commands `/spec`, `/plan`, `/qa`, `/docs`, plus a global `CLAUDE.md`.
+  agents `product-owner`, `architect`, `developer`, `qa`, `reviewer`,
+  `tech-writer` and the commands `/spec`, `/plan`, `/qa`, `/docs`, plus a global `CLAUDE.md`.
 
 Tracked and synced across all hosts via git: configuration and the AI-team
 agents/commands. Still local-only: credentials, `history.jsonl`, `sessions/`,
@@ -86,6 +109,9 @@ brew bundle --file ~/src/dotfiles/homebrew/Brewfile
 ~/src/dotfiles/claude/install.sh
 stow -R -t ~ git zsh tmux config ssh    # everything outside ~/.claude
 ```
+
+Afterwards, `~/src/dotfiles/stow-check` verifies the links landed (see
+"Checking stow health" above).
 
 The Brewfile carries every CLI tool the workflows assume (including
 `direnv`, `pre-commit`, `just`, `opentofu`, `gitleaks` for
@@ -116,7 +142,7 @@ Until this has been run, `.zshrc` prints a one-line reminder on shell start.
 
 #### Per-host files stow deliberately does not carry
 
-Three things are gitignored or host-local by design, so a fresh machine has to
+Five things are gitignored or host-local by design, so a fresh machine has to
 set them up by hand. Stow completing without error does **not** mean these are
 done — nothing warns you if they're missing.
 
@@ -136,6 +162,13 @@ done — nothing warns you if they're missing.
 3. **`~/.ssh/rc`** — on headless hosts, refreshes the stable
    `~/.ssh/agent.sock` symlink for a forwarded agent. It's in the `ssh`
    package, but where a real file already exists stow won't overwrite it.
+
+4. **`~/.config/gh/hosts.yml`** — run `gh auth login` per host. `gh` writes a
+   live `oauth_token` into this file, so it can never be a tracked dotfile;
+   the `config` package ships `gh/config.yml` (preferences) but not this.
+
+5. **`~/.granted/config`** — let `granted` create it on first run, then edit
+   to taste. It's host-specific app state (e.g. a browser path), not shipped.
 
 **Headless hosts should not depend on a forwarded or GUI-gated SSH agent for
 git.** mosh forwards no agent at all, and 1Password's agent can only sign while

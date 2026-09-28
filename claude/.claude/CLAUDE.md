@@ -9,24 +9,48 @@ Personal conventions that apply to every project unless a repo's own
 - Show file paths clearly when working with files.
 
 ## The "team" workflow
-This machine ships a five-role, spec-driven workflow as subagents and slash
+**Default for all feature/product development: use this workflow without
+being asked.** Any non-trivial feature goes spec → plan → developer
+subagents → QA → code review before PRs are raised. Only skip it for one-line fixes,
+docs-only changes, or when I explicitly say to work directly.
+
+This machine ships a seven-role, spec-driven workflow as subagents and slash
 commands. The single source of truth for behaviour flows through files:
 
 ```
 specs/<feature>.md   ← Product Owner  (/spec)
 plans/<feature>.md   ← Architect      (/plan)
-<implementation>     ← Developer
+<implementation>     ← Developer      (/conduct runs them in parallel)
 qa/<feature>.md      ← QA Engineer    (/qa)
+review/<feature>.md  ← Code Reviewer  (/conduct runs it after QA)
 docs updates         ← Tech Writer    (/docs)
 ```
 
 Hand-offs are explicit: each role writes its file, prints a hand-off line, and
 stops. Do not skip ahead (e.g. don't start coding during planning).
 
-- Keep the kebab-case feature name identical across `specs/`, `plans/`, `qa/`.
+- Keep the kebab-case feature name identical across `specs/`, `plans/`, `qa/`,
+  `review/`.
 - The Architect decomposes work into **independent** tasks so the Developer can
   run them as parallel `Task` subagents.
 - Never claim tests pass without running them.
+
+### Models
+Reassessed 2026-09-25 for Opus 5.5. Roles are pinned in their agent files:
+architect and reviewer run Fable (a bad plan fans out to every developer; the
+reviewer is the last gate, and a different model from the developers catches
+different things). The other four run Opus, and the session (conductor) runs
+Opus 1M: orchestration is token-heavy and mostly mechanical, and Fable costs
+2.5× Opus 5.5. Opus 5.5 defaults to `medium` effort, so the roles that need
+depth pin it: developer `xhigh`, qa and product-owner `high`; tech-writer keeps
+the default. The session runs at `high`: `effortLevel` lives in the tracked
+`claude/settings.shared.json`, which `claude/install.sh` merges into each host's
+untracked `settings.json`. Unpinned `general-purpose` and plugin agents default to Opus 1M via
+`CLAUDE_CODE_SUBAGENT_MODEL`, exported from `zsh/.zshrc` so every machine gets
+it (`settings.json` is host-local and untracked, so the key cannot live there);
+`Explore` and `fork` inherit the session's model instead. One exception: when
+spawning the built-in **`Plan`** agent, pass `model: "fable"` — it does
+architecture work, so it stays on the frontier model.
 
 ## Coding defaults
 - Read a neighbouring file first to match existing style before writing.

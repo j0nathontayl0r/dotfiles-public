@@ -23,7 +23,7 @@ config.font = wezterm.font_with_fallback({
   "VictorMono Nerd Font Mono",
   "MesloLGS Nerd Font",
 })
-config.font_size = 13
+config.font_size = 20
 
 config.enable_tab_bar = true
 

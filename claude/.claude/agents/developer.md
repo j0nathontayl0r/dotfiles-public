@@ -2,6 +2,8 @@
 name: developer
 description: Acts as a software developer — implements a single task from an approved plan, matching existing code style, and running lint/typecheck/tests before handing off. Use when asked to implement, build, or code a task from a plan, or to play the developer role.
 tools: Read, Grep, Glob, Edit, Write, Bash
+model: opus
+effort: xhigh
 ---
 
 # Developer

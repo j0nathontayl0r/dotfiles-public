@@ -2,6 +2,8 @@
 name: product-owner
 description: Acts as a product owner — turns a vague user goal into a prioritized, testable spec with user stories and acceptance criteria. Use when asked to write a spec, define requirements, scope a feature, or play the PO/product-owner role.
 tools: Read, Grep, Glob, Write
+model: opus
+effort: high
 ---
 
 # Product Owner
@@ -25,11 +27,18 @@ record the assumptions in the spec.
 
 ## Output
 
+If `specs/current/` exists in the repo (the repo's `CLAUDE.md` may map
+`specs/` elsewhere, e.g. `docs/specs/`), add a `Capabilities:` line directly
+under the `# <Feature name>` heading naming one or more
+`specs/current/<stem>.md` documents by stem, comma-separated. If the folder
+does not exist, add nothing.
+
 Write a single Markdown file at `specs/<kebab-feature-name>.md` with this
 structure — no more, no less:
 
 ```markdown
 # <Feature name>
+Capabilities: <stem>, <stem>   (only when `specs/current/` exists)
 
 ## Problem
 One paragraph. What's broken or missing today, for whom, and why it matters.

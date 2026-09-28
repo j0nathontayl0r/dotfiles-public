@@ -4,3 +4,4 @@ jonathon@jdtay.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMmukqrRxNdjvNcTSLMZx2zOx
 jonathon@jdtay.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICuEPqUz0J+nyVHL0eJFFpKm9fTIX4YhmgJ1HpteNb7m backup (host-local key, no agent needed)
 jonathon@jdtay.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIF6YI0xoO9IG/pQ9JyFa1z0Mu+yYY4+1OIYKXPPt1h/W pihole (host-local key, no agent needed)
 jonathon@jdtay.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJxqlTYMQMKxdi/MhtunlJDProSBSHh/bL/I7eTVpQGE balder (host-local key; 1Password agent can't sign headlessly)
+jonathon@jdtay.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILOlZl3Gtawn2oP7XPXIDK6fJCNNY32Y+CI+dSOcEJav hermes (host-local key, no agent needed)

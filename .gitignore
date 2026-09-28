@@ -59,3 +59,11 @@ claude/.claude/settings.json
 # it through a symlink, and the device id must differ per machine, so it can
 # never be a stow-managed dotfile. op recreates it as needed.
 config/.config/op/
+
+# gh CLI: hosts.yml holds a live oauth_token written by `gh auth login`, never
+# a static dotfile — run `gh auth login` per host instead of stowing this.
+config/.config/gh/hosts.yml
+
+# granted: config is host-specific app state (e.g. a machine's own browser
+# path) that granted itself writes on first run — never shipped.
+granted/.granted/config

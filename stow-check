@@ -1,0 +1,517 @@
+#!/usr/bin/env bash
+# stow-check — read-only audit of this repo's GNU Stow deployment into ~.
+#
+# Discovers packages dynamically (top-level directories, minus specs/plans/qa
+# and dot-directories) and classifies every target each package provides:
+#   linked            symlink resolves into this repo — healthy
+#   dangling          symlink points into this repo (by link text) but its
+#                     destination no longer exists (e.g. after a repo move)
+#   conflict          something else sits where stow wants a link — subtypes
+#                     identical / diverged / marker-like / directory /
+#                     foreign-symlink
+#   absolute-symlink  resolves into this repo but the link text is absolute,
+#                     so stow does not own it — warning only, does not fail
+#   missing           no entry at the target; a package whose targets are ALL
+#                     missing collapses to "never stowed" (informational)
+#
+# Every problem comes with the exact copy-paste command(s) to fix it. The
+# commands are printed, NEVER executed: this script is strictly read-only.
+# Every stow invocation below carries -n (dry run) and there is no mutating
+# command anywhere in the script. A per-package `stow -n -R` cross-check
+# confirms the filesystem walk's verdict; it can only add problems, never
+# clear them.
+#
+# The claude package is audited with the same flags claude/install.sh uses
+# (memory/ and projects/ are host-local and never audited), and its suggested
+# fixes point at ./claude/install.sh rather than raw stow.
+#
+# Usage:     ./stow-check [PACKAGE...]     (no args: audit every package)
+# Exit:      0 healthy (warnings allowed) · 1 problems found · 2 usage error
+# Colour:    only on a TTY; NO_COLOR suppresses it.
+# Target:    $HOME — so `HOME=/some/scratch ./stow-check` audits a fake home.
+set -euo pipefail
+
+# Resolve $0 through symlinks so repo_root is correct no matter how this
+# script is invoked — plain `dirname "$0"` only reflects the invocation path,
+# not the real one, and silently computes the wrong repo_root through a symlink.
+resolve_script_dir() {
+  local src="$1" dir target
+  while [ -L "$src" ]; do
+    dir="$(cd -P "$(dirname "$src")" && pwd)"
+    target="$(readlink "$src")"
+    case "$target" in
+      /*) src="$target" ;;
+      *) src="$dir/$target" ;;
+    esac
+  done
+  cd -P "$(dirname "$src")" && pwd
+}
+
+repo_root="$(resolve_script_dir "$0")"
+
+# Colour variables stay empty strings unless stdout is a colour-capable TTY,
+# so piped output never contains escape codes.
+setup_colours() {
+  RED='' GREEN='' YELLOW='' CYAN='' BOLD='' RESET=''
+  if [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-}" != dumb ]]; then
+    RED=$'\e[31m' GREEN=$'\e[32m' YELLOW=$'\e[33m' CYAN=$'\e[36m'
+    BOLD=$'\e[1m' RESET=$'\e[0m'
+  fi
+}
+
+# Packages are the repo's top-level directories; the glob skips dot-dirs by
+# construction and top-level regular files never match. The only hardcoded
+# names are the non-package exclusions.
+discover_packages() {
+  PACKAGES=()
+  local d name
+  for d in "$repo_root"/*/; do
+    name="$(basename "$d")"
+    case "$name" in
+      specs|plans|qa) continue ;;
+    esac
+    PACKAGES+=("$name")
+  done
+}
+
+# Per-package stow flags — the claude case is byte-identical to the flags in
+# claude/install.sh, so the audit sees exactly what the installer does.
+pkg_stow_flags() {
+  case "$1" in
+    claude) printf '%s' "--no-folding --ignore='memory' --ignore='projects'" ;;
+    *) printf '%s' "" ;;
+  esac
+}
+
+# The restow command we suggest (never run). For claude, always the installer.
+restow_cmd() {
+  if [ "$1" = claude ]; then
+    printf '%s' "./claude/install.sh"
+  else
+    printf '%s' "stow -R -t ~ $1"
+  fi
+}
+
+# Every file/symlink the package provides, as paths relative to the package
+# dir, sorted. claude mirrors install.sh's find excludes so memory/ and
+# projects/ can never surface in any state.
+enumerate_targets() {
+  local pkg="$1" f
+  local -a excludes=()
+  if [ "$pkg" = claude ]; then
+    excludes=(-not -path '*/memory/*' -not -path '*/projects/*')
+  fi
+  while IFS= read -r f; do
+    printf '%s\n' "${f#"$repo_root/$pkg/"}"
+  done < <(find "$repo_root/$pkg" \( -type f -o -type l \) \
+             ${excludes[@]+"${excludes[@]}"} | sort)
+}
+
+# Pure-path canonicalise (must work when the destination does not exist, for
+# the dangling case). realpath -m where available; otherwise resolve the
+# existing parent via cd -P and re-append the basename; otherwise normalise
+# lexically (macOS-safe fallbacks).
+canon() {
+  local p="$1" out d b part
+  if out="$(realpath -m -- "$p" 2>/dev/null)"; then
+    printf '%s\n' "$out"
+    return
+  fi
+  d="$(dirname -- "$p")"
+  b="$(basename -- "$p")"
+  if [ -d "$d" ]; then
+    printf '%s/%s\n' "$(cd -P "$d" && pwd)" "$b"
+    return
+  fi
+  local -a parts=() kept=()
+  IFS=/ read -r -a parts <<< "$p"
+  for part in ${parts[@]+"${parts[@]}"}; do
+    case "$part" in
+      ''|.) ;;
+      ..)
+        if [ "${#kept[@]}" -gt 0 ]; then
+          unset "kept[$((${#kept[@]} - 1))]"
+        fi
+        ;;
+      *) kept+=("$part") ;;
+    esac
+  done
+  local IFS=/
+  printf '/%s\n' "${kept[*]-}"
+}
+
+is_under_repo() {
+  case "$1" in
+    "$repo_root"|"$repo_root"/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Shallowest-first walk of $HOME/<c1>/<c2>/... over the target's PROPER
+# ancestors; sets FSA_ANC to the first that is a symlink (a stow fold point),
+# or empty. A global rather than stdout so the per-target hot path does not
+# fork a command substitution.
+find_symlink_ancestor() {
+  local rel="$1" prefix="$HOME" i
+  local -a parts=()
+  FSA_ANC=''
+  IFS=/ read -r -a parts <<< "$rel"
+  for ((i = 0; i < ${#parts[@]} - 1; i++)); do
+    prefix="$prefix/${parts[i]}"
+    if [ -L "$prefix" ]; then
+      FSA_ANC="$prefix"
+      return
+    fi
+  done
+}
+
+# readlink a symlink; relative link text is resolved against the link's own
+# directory. Prints "canonical_destination|link_text" — the raw text matters
+# because stow only owns links whose text is relative.
+resolve_link() {
+  local link="$1" text dest
+  text="$(readlink -- "$link")"
+  case "$text" in
+    /*) dest="$text" ;;
+    *) dest="$(dirname -- "$link")/$text" ;;
+  esac
+  printf '%s|%s\n' "$(canon "$dest")" "$text"
+}
+
+# Classify one target. Results via globals:
+#   CT_STATE    linked | covered | dangling | absolute-symlink | missing |
+#               conflict-{foreign,directory,identical,diverged,marker}
+#   CT_DISPLAY  absolute path the finding is reported at (the fold point for
+#               ancestor cases, deduplicated via SEEN_ANCESTORS)
+#   CT_BASE     identical|diverged underneath a marker-like conflict
+#   CT_DEST     resolved destination for foreign symlinks
+classify_target() {
+  local pkg="$1" rel="$2"
+  local T="$HOME/$rel" S="$repo_root/$pkg/$rel"
+  local anc dest text
+  CT_STATE='' CT_DISPLAY="$T" CT_BASE='' CT_DEST=''
+
+  # 1. Fold check: is the target covered (or blocked) by a symlinked ancestor
+  #    directory (e.g. ~/hooks, ~/.granted)?
+  find_symlink_ancestor "$rel"
+  anc="$FSA_ANC"
+  if [ -n "$anc" ]; then
+    # Each distinct ancestor is resolved exactly once and its verdict cached —
+    # a folded package can route thousands of targets through the same link,
+    # and re-resolving it per target forks the script into a minutes-long hang.
+    local i
+    for ((i = 0; i < ${#SEEN_ANCESTORS[@]}; i++)); do
+      if [ "${SEEN_ANCESTORS[i]}" = "$anc" ]; then
+        if [ "${SEEN_ANC_STATES[i]}" = linked ]; then
+          CT_STATE=linked           # healthy folded dir link covers this target
+        else
+          CT_STATE=covered          # problem ancestor already reported once
+        fi
+        return
+      fi
+    done
+    IFS='|' read -r dest text <<< "$(resolve_link "$anc")"
+    CT_DISPLAY="$anc" CT_DEST="$dest"
+    if is_under_repo "$dest"; then
+      if [ -e "$anc" ]; then
+        if [[ "$text" = /* ]]; then
+          CT_STATE=absolute-symlink
+        else
+          CT_STATE=linked
+        fi
+      else
+        CT_STATE=dangling
+      fi
+    else
+      CT_STATE=conflict-foreign
+    fi
+    SEEN_ANCESTORS+=("$anc")
+    SEEN_ANC_STATES+=("$CT_STATE")
+    return
+  fi
+
+  # 2. The target itself is a symlink.
+  if [ -L "$T" ]; then
+    IFS='|' read -r dest text <<< "$(resolve_link "$T")"
+    CT_DEST="$dest"
+    if is_under_repo "$dest"; then
+      if [ -e "$T" ]; then
+        if [[ "$text" = /* ]]; then
+          CT_STATE=absolute-symlink
+        else
+          CT_STATE=linked
+        fi
+      else
+        CT_STATE=dangling
+      fi
+    else
+      CT_STATE=conflict-foreign
+    fi
+    return
+  fi
+
+  # 3. A real filesystem entry sits where stow wants a link.
+  if [ -e "$T" ]; then
+    if [ -d "$T" ]; then
+      CT_STATE=conflict-directory
+      return
+    fi
+    if cmp -s -- "$T" "$S"; then
+      CT_BASE=identical
+    else
+      CT_BASE=diverged
+    fi
+    if [ ! -s "$T" ]; then
+      CT_STATE=conflict-marker      # zero-byte: likely app-managed marker
+    else
+      CT_STATE="conflict-$CT_BASE"
+    fi
+    return
+  fi
+
+  # 4. Nothing there at all.
+  CT_STATE=missing
+}
+
+# How many lines differ between repo copy and local file.
+count_diff_lines() {
+  { diff -- "$1" "$2" 2>/dev/null || true; } | { grep -c '^[<>]' || true; }
+}
+
+# First two hunks of `diff -u repo local`, at most 12 lines, indented.
+diff_hunks() {
+  { diff -u -- "$1" "$2" 2>/dev/null || true; } | awk '
+    NR <= 2 { next }                # skip the ---/+++ header lines
+    /^@@/ { hunks++ }
+    hunks > 2 { exit }
+    { print "      " $0; if (++n >= 12) exit }
+  '
+}
+
+# Advisory cross-check: one dry-run restow per package (tolerating stow's
+# non-zero exit on simulated conflicts), parsing only its conflict bullets.
+# Prints conflicting target paths (relative to $HOME), one per line.
+stow_crosscheck() {
+  local pkg="$1" flags out
+  flags="$(pkg_stow_flags "$pkg")"
+  out="$(cd "$repo_root" && eval "stow -n -R -t \"\$HOME\" $flags \"\$pkg\" 2>&1")" || true
+  printf '%s\n' "$out" | sed -n \
+    -e 's/^[[:space:]]*\* existing target is not owned by stow: \(.*\)$/\1/p' \
+    -e 's/^[[:space:]]*\* cannot stow .* over existing target \(.*\) since .*$/\1/p'
+}
+
+pad_label() {
+  printf '%-19s' "$1"
+}
+
+# Audit one package: classify every target, run the cross-check, print the
+# package block. Verdict via global PKG_STATUS: ok | warn | never | problem.
+audit_package() {
+  local pkg="$1"
+  local -a targets=() flagged=() body=() missing_rels=()
+  local rel disp reldisp restow header S T
+  local n_total=0 n_linked=0 n_missing=0 n_problem=0 n_warn=0
+  local n_lines dl hline p f matched
+
+  while IFS= read -r rel; do
+    targets+=("$rel")
+  done < <(enumerate_targets "$pkg")
+  n_total=${#targets[@]}
+  restow="$(restow_cmd "$pkg")"
+  SEEN_ANCESTORS=() SEEN_ANC_STATES=()
+
+  for rel in ${targets[@]+"${targets[@]}"}; do
+    classify_target "$pkg" "$rel"
+    disp="~${CT_DISPLAY#"$HOME"}"
+    reldisp="${CT_DISPLAY#"$HOME"/}"
+    S="$repo_root/$pkg/$rel"
+    T="$HOME/$rel"
+    case "$CT_STATE" in
+      linked)
+        ((++n_linked)) ;;
+      covered)
+        : ;;                        # already reported at its fold point
+      missing)
+        ((++n_missing))
+        missing_rels+=("$rel") ;;
+      absolute-symlink)
+        ((++n_warn))
+        flagged+=("$reldisp")
+        body+=("  ${YELLOW}$(pad_label 'absolute-symlink')${RESET}  $disp — works, but stow does not own it")
+        body+=("      rm '$CT_DISPLAY' && $restow")
+        ;;
+      dangling)
+        ((++n_problem))
+        flagged+=("$reldisp")
+        body+=("  ${RED}$(pad_label 'dangling')${RESET}  $disp — symlink into this repo, but the destination is gone")
+        body+=("      rm '$CT_DISPLAY' && $restow")
+        body+=("      (after a repo move — see README → \"Moving or relocating the repo\")")
+        ;;
+      conflict-foreign)
+        ((++n_problem))
+        flagged+=("$reldisp")
+        body+=("  ${RED}$(pad_label 'conflict (foreign-symlink)')${RESET}  $disp — symlink pointing outside this repo (→ $CT_DEST)")
+        body+=("      inspect '$CT_DISPLAY' manually, then restow: $restow")
+        ;;
+      conflict-directory)
+        ((++n_problem))
+        flagged+=("$reldisp")
+        body+=("  ${RED}$(pad_label 'conflict (directory)')${RESET}  $disp — real directory where stow wants a link")
+        body+=("      back up '$CT_DISPLAY' manually, then restow: $restow")
+        ;;
+      conflict-identical)
+        ((++n_problem))
+        flagged+=("$reldisp")
+        body+=("  ${RED}$(pad_label 'conflict (identical)')${RESET}  $disp — real file, identical to the repo copy")
+        body+=("      rm '$CT_DISPLAY' && $restow")
+        ;;
+      conflict-diverged)
+        ((++n_problem))
+        flagged+=("$reldisp")
+        n_lines="$(count_diff_lines "$S" "$T")"
+        if [ "$n_lines" -eq 0 ]; then
+          dl="contents differ"
+        elif [ "$n_lines" -eq 1 ]; then
+          dl="1 line differs"
+        else
+          dl="$n_lines lines differ"
+        fi
+        body+=("  ${RED}$(pad_label 'conflict (diverged)')${RESET}  $disp — $dl")
+        body+=("      --- first hunks of diff (repo vs local) ---")
+        while IFS= read -r hline; do
+          body+=("$hline")
+        done < <(diff_hunks "$S" "$T")
+        body+=("      repo wins:  rm '$CT_DISPLAY' && $restow")
+        if [ "$pkg" = claude ]; then
+          body+=("      local wins: cp '$CT_DISPLAY' '$S' && ./claude/install.sh   # WARNING: OVERWRITES the repo copy with the local file")
+        else
+          body+=("      local wins: stow --adopt -R -t ~ $pkg   # WARNING: --adopt OVERWRITES the repo copy with the local file")
+        fi
+        ;;
+      conflict-marker)
+        ((++n_problem))
+        flagged+=("$reldisp")
+        body+=("  ${RED}$(pad_label 'conflict (marker-like)')${RESET}  $disp — zero-byte file, likely app-managed ($CT_BASE vs repo copy)")
+        body+=("      repo wins:  rm '$CT_DISPLAY' && $restow")
+        if [ "$pkg" = claude ]; then
+          body+=("      local wins: cp '$CT_DISPLAY' '$S' && ./claude/install.sh   # WARNING: OVERWRITES the repo copy with the local file")
+        else
+          body+=("      local wins: stow --adopt -R -t ~ $pkg   # WARNING: --adopt OVERWRITES the repo copy with the local file")
+        fi
+        body+=("      or untrack it from the repo — the script cannot decide: git rm --cached '$pkg/$rel'")
+        ;;
+    esac
+  done
+
+  # A package whose targets are all missing was simply never stowed here.
+  if [ "$n_missing" -eq "$n_total" ] && [ "$n_problem" -eq 0 ] && [ "$n_warn" -eq 0 ]; then
+    printf '%-14s %s\n' "== $pkg ==" "${CYAN}never stowed — may be intentional on this host${RESET}"
+    PKG_STATUS=never
+    return
+  fi
+
+  # Partial stow: each missing target is a problem.
+  for rel in ${missing_rels[@]+"${missing_rels[@]}"}; do
+    ((++n_problem))
+    body+=("  ${RED}$(pad_label 'missing')${RESET}  ~/$rel — package only partially stowed")
+    body+=("      $restow")
+  done
+
+  # Advisory cross-check: every conflict stow's dry run reports must already
+  # be explained by the walk; anything it found that we called healthy is a
+  # problem. This can only add problems, never clear them.
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    matched=no
+    for f in ${flagged[@]+"${flagged[@]}"}; do
+      if [[ "$p" == "$f" || "$p" == "$f"/* || "$f" == "$p"/* ]]; then
+        matched=yes
+        break
+      fi
+    done
+    if [ "$matched" = no ]; then
+      ((++n_problem))
+      body+=("  ${RED}warning: cross-check mismatch on ~/$p — treat as conflict${RESET}")
+    fi
+  done < <(stow_crosscheck "$pkg")
+
+  if [ "$n_problem" -gt 0 ]; then
+    header="${RED}${BOLD}PROBLEMS${RESET}"
+    PKG_STATUS=problem
+  elif [ "$n_warn" -gt 0 ]; then
+    header="${YELLOW}WARNINGS${RESET}"
+    PKG_STATUS=warn
+  elif [ "$n_linked" -eq 1 ]; then
+    header="${GREEN}OK${RESET} (1 target linked)"
+    PKG_STATUS=ok
+  else
+    header="${GREEN}OK${RESET} ($n_linked targets linked)"
+    PKG_STATUS=ok
+  fi
+  printf '%-14s %s\n' "== $pkg ==" "$header"
+  local line
+  for line in ${body[@]+"${body[@]}"}; do
+    printf '%s\n' "$line"
+  done
+}
+
+main() {
+  setup_colours
+  command -v stow >/dev/null 2>&1 || {
+    echo "error: GNU stow not installed." >&2
+    exit 2
+  }
+  discover_packages
+
+  local -a selected=()
+  local arg p found
+  if [ "$#" -gt 0 ]; then
+    for arg in "$@"; do
+      found=no
+      for p in "${PACKAGES[@]}"; do
+        if [ "$p" = "$arg" ]; then
+          found=yes
+          break
+        fi
+      done
+      if [ "$found" = no ]; then
+        echo "error: unknown package '$arg' (known: ${PACKAGES[*]})" >&2
+        exit 2
+      fi
+      selected+=("$arg")
+    done
+  else
+    selected=("${PACKAGES[@]}")
+  fi
+
+  local pkg n_ok=0 n_never=0 n_prob=0 n_warnpkg=0
+  for pkg in "${selected[@]}"; do
+    audit_package "$pkg"
+    case "$PKG_STATUS" in
+      ok) ((++n_ok)) ;;
+      warn) ((++n_warnpkg)) ;;
+      never) ((++n_never)) ;;
+      problem) ((++n_prob)) ;;
+    esac
+  done
+
+  local summary="Summary: $((n_ok + n_warnpkg)) OK"
+  if [ "$n_warnpkg" -gt 0 ]; then
+    summary+=", $n_warnpkg with warnings"
+  fi
+  summary+=", $n_never never stowed"
+  if [ "$n_prob" -eq 1 ]; then
+    summary+=", 1 package with problems"
+  else
+    summary+=", $n_prob packages with problems"
+  fi
+  echo
+  echo "$summary"
+
+  if [ "$n_prob" -gt 0 ]; then
+    exit 1
+  fi
+  exit 0
+}
+
+main "$@"
